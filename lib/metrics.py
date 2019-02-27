@@ -88,26 +88,16 @@ def ssim_list(fd1, fd2, width, height, nframes = 1, fourcc = "I420", fourcc2 = N
   result = list(itertools.chain(*[r.get() for r in results]))
   return result
 
-def calculate_ssim(filename1, filename2, width, height, nframes = 1, fourcc = "I420", fourcc2 = None):
-  with open(filename1, "rb") as fd1, open(filename2, "rb") as fd2:
-    result = ssim_list(fd1, fd2, width, height, nframes, fourcc, fourcc2)
-
-  return (
-    min(result[0::3]),
-    min(result[1::3]),
-    min(result[2::3]),
-    sum(result[0::3]) / nframes,
-    sum(result[1::3]) / nframes,
-    sum(result[2::3]) / nframes,
-  )
-
-def calculate_multi_res_ssim(filename1, filename2, multi_res, nframes, fourcc = "I420", fourcc2 = None):
+def calculate_ssim(filename1, filename2, width, height, nframes = 1, fourcc = "I420", fourcc2 = None, multi_res = None):
   result = list()
 
   with open(filename1, "rb") as fd1, open(filename2, "rb") as fd2:
-    for i in multi_res:
-      ssim_list_res = ssim_list(fd1, fd2, i[0], i[1], i[2], fourcc, fourcc2)
-      result.extend(ssim_list_res)
+    if multi_res:
+      for i in multi_res:
+        ssim_list_res = ssim_list(fd1, fd2, i[0], i[1], i[2], fourcc, fourcc2)
+        result.extend(ssim_list_res)
+    else:
+      result = ssim_list(fd1, fd2, width, height, nframes, fourcc, fourcc2)
 
   return (
     min(result[0::3]),
@@ -182,6 +172,18 @@ def check_filesize(filename, width, height, nframes, fourcc):
   actual = os.stat(filename).st_size
   assert expected == actual
 
+def numbytes_calculate(width, height, fourcc, frames, multi_res = None):
+  numbytes = 0
+
+  if multi_res:
+    for i in multi_res:
+      numbytes_res = get_framesize(i[0], i[1], fourcc) * i[2]
+      numbytes = numbytes + numbytes_res
+  else:
+    numbytes = get_framesize(width, height, fourcc) * frames
+
+  return numbytes
+
 def check_metric(**params):
   metric = params["metric"]
   type = metric["type"]
@@ -191,10 +193,11 @@ def check_metric(**params):
     minu = metric.get("minu", 1.0)
     minv = metric.get("minv", 1.0)
     if params.get("multi_res"):
-      ssim = calculate_multi_res_ssim(
+      ssim = calculate_ssim(
         params["reference"], params["decoded"],
-        params["multi_res"], params["frames"],
-        params["format"], params.get("format2", None))
+        params["width"], params["height"],
+        params["frames"], params["format"],
+        params.get("format2", None), params["multi_res"])
     else:
       ssim = calculate_ssim(
         params["reference"], params["decoded"],
@@ -207,10 +210,15 @@ def check_metric(**params):
     assert 1.0 >= ssim[2] >= minv
 
   elif "md5" == type:
-    numbytes = metric.get("numbytes", get_framesize(
-      params["width"], params["height"],
-      params.get("format2", params["format"])
-    ) * params["frames"])
+    if params.get("multi_res"):
+      numbytes = metric.get("numbytes", numbytes_calculate(
+        params["width"], params["height"], params.get("format2",
+        params["format"]), params["frames"], params["multi_res"]))
+    else:
+      numbytes = metric.get("numbytes", numbytes_calculate(
+        params["width"], params["height"], params.get("format2",
+        params["format"]), params["frames"]))
+
     res = md5(filename = params["decoded"], numbytes = numbytes)
     get_media().baseline.check_md5(
       md5 = res, context = params.get("refctx", []))
